@@ -151,7 +151,7 @@ export_playlist <- function(playlist_name, track_ids) {
 
 
 get_user_playlists <- function(user_id) {
-    access_token <- readLines("access.token")
+    access_token <- readLines("tokens/access.token")
     
     offset <- 0
     user_playlists <- c()
