@@ -1,5 +1,5 @@
 
-create_playlist_searches <- function(playlist_name, playlist_link, num_searches) {
+create_playlist_searches <- function(playlist_name, playlist_link, num_searches, user_to_exclude, trawl = FALSE) {
     
     # Get fresh access token --------------------------------------------------
     
@@ -9,22 +9,75 @@ create_playlist_searches <- function(playlist_name, playlist_link, num_searches)
     # Import playlist ---------------------------------------------------------
     
     source_playlist <- import_playlist(playlist_link, use_cache = F)
-        
+    
+    # Create search cache -----------------------------------------------------
+    
+    cache_dt <- create_cache(user_to_exclude, playlist_link)
+    
     # Make Google searches ----------------------------------------------------
     
-    search_results <- make_google_searches(playlist_name, source_playlist, num_searches)
+    search_results <- make_google_searches(playlist_name, source_playlist, num_searches, cache_dt, trawl)
 }
 
 
-search_cache <- function(search_tracks, search_titles) {
-    #' Search cached playlists, already downloaded
+create_cache <- function(user_to_exclude, playlist_link) {
     
+    if(!is.null(user_to_exclude)) {
+        exclusion_playlists <- unname(c(sapply(get_user_playlists(user_to_exclude), link2id), link2id(playlist_link), "1vKWNlUNYhZtlOI5ZIcy8W"))
+    } else {
+        exclusion_playlists <- NULL
+    }
     
-    return(cache_result)
+    #' Search from cached playlists instead of Google
+    
+    cached_ids <- sapply(strsplit(list.files("cache/playlists"), "\\."), function(x) x[1])
+    cached_ids <- cached_ids[!(cached_ids %in% exclusion_playlists)]
+    
+    full_cache <- lapply(cached_ids, function(playlist_id) {
+        playlist <- import_playlist(playlist_id, use_cache = TRUE, cache_expiry_days = Inf)
+        dt <- playlist2dt(playlist)
+        
+        if(is.data.table(dt) && nrow(dt) > 0) {
+            dt[, playlist_id := playlist_id]
+        }
+        
+        return(dt)
+    })
+    
+    cache_dt <- rbindlist(full_cache)
+    
+    return(cache_dt)
 }
 
 
-make_google_searches <- function(playlist_name, source_playlist, num_searches) {
+search_cache <- function(cache_dt, search_tracks, is_track_search) {
+    if(is_track_search) {
+        playlist_ids <- Reduce(intersect, lapply(search_tracks, function(track) {
+            cache_dt[id == track[["id"]]][["playlist_id"]]
+        }))
+    } else {
+        cache_subset <- copy(cache_dt)  # Use subsetting to speed artist search up; progressively reduce search space
+        artists <- sapply(search_tracks, function(x) x[["artists"]][[1]])
+        
+        for(artist in artists) {
+            matching_playlist_ids <- unique(cache_subset[grepl(artist, artists)][["playlist_id"]])
+            cache_subset <- cache_subset[playlist_id %in% matching_playlist_ids]
+            
+            if(nrow(cache_subset) == 0) {
+                break
+            }
+        }
+        
+        playlist_ids <- matching_playlist_ids
+    }
+    
+    return(list(search_tracks = search_tracks,
+                search_links = playlist_ids, 
+                total_results = length(playlist_ids)))
+}
+
+
+make_google_searches <- function(playlist_name, source_playlist, num_searches, cache_dt, trawl = FALSE) {
     
     # Support for caching of search results
     
@@ -45,47 +98,72 @@ make_google_searches <- function(playlist_name, source_playlist, num_searches) {
     while(successful_searches < num_searches) {
         
         r <- runif(1)
-        # 80% search for tracks
-        if(r <= 0.8) {
-            r2 <- runif(1)
+        
+        # 50%: search for tracks
+        # 50%: search for artists
+        is_track_search <- r <= 0.5
+        
+        if(is_track_search) {
+            r <- runif(1)
             
-            if(r2 <= 0.9) {
+            # 20%: 1 song
+            # 60%: 2 songs
+            # 15%: 3 songs
+            # 5%: 4 songs
+            
+            if(r <= 0.2) {
+                n <- 1
+            } else if(r <= 0.8) {
                 n <- 2
-            } else if(r2 <= 0.95) {
+            } else if(r <= 0.95) {
                 n <- 3
             } else {
-                n <- 1
+                n <- 4
             }
+            
             search_tracks <- sample(source_playlist[["tracks"]], n)
             search_titles <- sapply(search_tracks, function(track) sprintf("%s - %s", track[["name"]], paste(track[["artists"]], collapse = ", ")))
-            history_string <- paste(sort(search_titles), collapse = " | ")
             
         } else {
             n <- sample(2:4, 1)
             search_tracks <- sample(source_playlist[["tracks"]], n)
             search_titles <- unique(sort(sapply(search_tracks, function(x) x[["artists"]][1])))
-            history_string <- paste(search_titles, collapse = " | ")
-        }        
+        }
+        
+        history_string <- paste(sort(search_titles), collapse = " | ")
         
         if(history_string %in% history) {
             next
         }
         
         search_result <- search_valueserp(search_tracks, search_titles)
-        cache_result <- search_cache(search_tracks, search_titles)
-            
+        cache_result <- search_cache(cache_dt, search_tracks, is_track_search)
+        
         if(length(search_result[["search_links"]]) > 0) {
             search_result[["search_playlists"]] <- lapply(search_result[["search_links"]], function(link) playlist2dt(import_playlist(link)))
         } else {
             search_result[["search_playlists"]] <- NULL
         }
         
+        if(length(cache_result[["search_links"]]) > 0) {
+            cache_result[["search_playlists"]] <- lapply(cache_result[["search_links"]], function(link) playlist2dt(import_playlist(link)))
+        } else {
+            cache_result[["search_playlists"]] <- NULL
+        }
+        
         search_results[[length(search_results) + 1]] <- search_result
+        search_results[[length(search_results) + 1]] <- cache_result
         
         successful_searches <- successful_searches + 1
         
-        print(sprintf("Search %d/%d | Num Results: %d | Search: %s", 
-                      successful_searches, num_searches, search_result[["total_results"]], history_string))
+        print(sprintf("Search %d/%d | Num Results: %d | Num Results (cache): %d | Search: %s", 
+                      successful_searches, num_searches, search_result[["total_results"]], cache_result[["total_results"]], history_string))
+        
+        if(trawl) {  # For top 10 results, import other playlists from users that created them
+            sapply(head(unname(sapply(c(search_result[["search_links"]], cache_result[["search_links"]]), link2id)), 10), function(playlist_id) {
+                import_other_playlists_from_creator(playlist_id, verbose = TRUE)    
+            })
+        }
         
         history <- c(history, history_string)
         
@@ -134,6 +212,8 @@ collate_search_results <- function(search_results, playlist_link, user_to_exclud
     
     # Create target playlist dt -----------------------------------------------
     
+    unique_playlists <- c()
+    
     target_dt <- rbindlist(lapply(search_results, function(result) {
         if(is.null(result[["search_playlists"]]) || is.null(unlist(result[["search_playlists"]]))) {
             return(NULL)
@@ -146,7 +226,15 @@ collate_search_results <- function(search_results, playlist_link, user_to_exclud
                 return(NULL)
             }
             
-            x[, playlist_id := link2id(result[["search_links"]][i])]
+            playlist_id <- link2id(result[["search_links"]][i])
+            
+            if(playlist_id %in% unique_playlists) {
+                return(NULL)
+            } else {
+                unique_playlists <<- c(unique_playlists, playlist_id)
+            }
+            
+            x[, playlist_id := playlist_id]
             x[, playlist_length := nrow(x)]
             
             search_names <- sapply(result[["search_tracks"]], function(x) sprintf("%s - %s", x[["name"]], paste(x[["artists"]], collapse = ", ")))
@@ -156,6 +244,14 @@ collate_search_results <- function(search_results, playlist_link, user_to_exclud
             x[, num_matches := length(matched_names)]
             return(x)
         }))
+        
+        if(nrow(result_dt) == 0) {
+            return(NULL)
+        }
+        
+        if(is.null(result[["total_results"]])) {
+            result[["total_results"]] <- length(result[["search_playlists"]])
+        }
         
         result_dt[, search_results := result[["total_results"]]]
     }))

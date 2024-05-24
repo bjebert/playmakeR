@@ -131,7 +131,6 @@ build_playlist <- function(search_results, playlist_name, playlist_link, user_to
         data.table(full_name = match_dt[, unlist(matched_tracks)], amt = match_dt[, rep(split_score, num_matches)])[, .(contrib = sum(amt)), by = full_name][order(-contrib)]
     })
     
-    
     export_playlist(sprintf("PlaymakeR-%s (diversity)", playlist_name), top_dt[["id"]])
 }
 

@@ -29,7 +29,7 @@ link2id <- function(playlist_link) {
 parse_tracks <- function(res) {
     #' Parses tracks into a succinct list, given the result 
     #' of a successful request to the playlists API as input
-
+    
     tracks <- lapply(content(res)[["items"]], function(track_chunk) {
         track <- track_chunk[["track"]][c("artists", "duration_ms", "id", "name", "popularity", "preview_url")]
         track[["artists"]] <- c(sapply(track[["artists"]], function(x) x[["name"]]))
@@ -99,7 +99,7 @@ import_playlist <- function(playlist_link, import_length = 1000, use_cache = TRU
         
         offset <- offset + 100
     }
-
+    
     # Playlist successfully parsed --------------------------------------------
     
     playlist <- list('id' = playlist_id,
@@ -113,7 +113,7 @@ import_playlist <- function(playlist_link, import_length = 1000, use_cache = TRU
 
 export_playlist <- function(playlist_name, track_ids) {
     access_token <- readLines("tokens/access.token")
-
+    
     # Create new playlist -----------------------------------------------------
     
     user_id <- '1254892983'  # Blake
@@ -131,7 +131,7 @@ export_playlist <- function(playlist_name, track_ids) {
     playlist_id <- content(res)[["id"]]
     
     # Add items to playlist ---------------------------------------------------
-
+    
     for(i in seq(1, length(track_ids), 100)) {
         uris <- sprintf('spotify:track:%s', track_ids[i:min(i + 99, length(track_ids))])
         
@@ -142,7 +142,7 @@ export_playlist <- function(playlist_name, track_ids) {
                     add_headers('Authorization' = sprintf('Bearer %s', access_token)))
     }
     
-    if(status_code(res) != 201) {
+    if(!(status_code(res) %in% c(200, 201))) {
         stop("Error adding tracks to playlist")
     } else {
         print(sprintf("Playlist: %s successfully created and populated!", playlist_name))
@@ -159,7 +159,7 @@ get_user_playlists <- function(user_id) {
     
     while(!started || length(content(res)[["items"]]) == 20) {
         started <- TRUE
-        res <- GET(sprintf('https://api.spotify.com/v1/users/%s/playlists?offset=%s', user_id, offset), 
+        res <- GET(sprintf('https://api.spotify.com/v1/users/%s/playlists?offset=%s&limit=50', user_id, offset), 
                    add_headers('Authorization' = sprintf('Bearer %s', access_token)))
         
         if(status_code(res) != 200) {
@@ -167,15 +167,44 @@ get_user_playlists <- function(user_id) {
         }
         
         user_playlists <- c(user_playlists, sapply(content(res)[["items"]], function(x) x[["href"]]))
-        offset <- offset + 20
+        offset <- offset + 50
     }
     
     return(user_playlists)
 }
 
 
+
+import_user_playlists <- function(user_id, verbose = F) {
+    user_playlists <- get_user_playlists(user_id)
+    
+    if(length(user_playlists) < 50) {  # To keep it more authentic, try not to import users with too many playlists (>= 50)
+        playlist_import <- sapply(user_playlists, function(playlist) import_playlist(playlist, use_cache = T, cache_expiry_days = 90)) 
+        
+        if(verbose) {
+            print(sprintf("Imported %s playlists from user: %s", length(user_playlists), user_id))
+        }
+    }
+}
+
+
+import_other_playlists_from_creator <- function(playlist_id, verbose = F) {
+    access_token <- readLines("tokens/access.token")
+    
+    # Get playlist creator info -----------------------------------------------
+    
+    res <- GET(sprintf("https://api.spotify.com/v1/playlists/%s", playlist_id), 
+               add_headers('Authorization' = sprintf('Bearer %s', access_token)))   
+    
+    if(status_code(res) == 200) {
+        creator_id <- content(res)[["owner"]][["id"]]
+        import_user_playlists(creator_id, verbose)
+    }
+}
+
+
 playlist2dt <- function(playlist) {
-    if(is.null(playlist)) {
+    if(is.null(playlist) || length(playlist[["tracks"]]) == 0) {
         return(NULL)
     }
     
@@ -189,9 +218,23 @@ playlist2dt <- function(playlist) {
         return(x)
     })))
     
+    if(nrow(playlist_dt) == 0) {
+        return(NULL)
+    }
+    
     playlist_dt[["artists"]] <- strsplit(playlist_dt[["artists"]], "_!\\+!_")
     playlist_dt[popularity == 0, popularity := as.integer(playlist_dt[popularity > 0, mean(popularity)])]
     
     return(playlist_dt[, -"preview_url"])
+}
+
+
+track2id <- function(track_name) {
+    access_token <- readLines("tokens/access.token")
+    
+    res <- GET(sprintf("https://api.spotify.com/v1/search?q=%s&type=track", gsub(" ", "+", track_name)), 
+               add_headers('Authorization' = sprintf('Bearer %s', access_token)))
+    
+    return(content(res)[["tracks"]][["items"]][[1]][["id"]])
 }
 
