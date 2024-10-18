@@ -2,7 +2,7 @@
 
 
 get_followers <- function(user_id) {
-    [REDACTED]
+    access_token <- "Bearer [REDACTED]"
     
     res <- GET(sprintf("https://spclient.wg.spotify.com/user-profile-view/v3/profile/%s/followers", user_id),
                add_headers('Authorization' = access_token))

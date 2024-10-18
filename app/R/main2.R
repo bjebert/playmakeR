@@ -46,10 +46,13 @@ playlist_link <- "https://open.spotify.com/playlist/37i9dQZF1Fa1IIVtEpGUcU?si=75
 playlist_name <- "K8."
 playlist_link <- "https://open.spotify.com/playlist/37i9dQZF1FamUZQWLe4oT1"
 
+playlist_name <- "Gym 2024"
+playlist_link <- "https://open.spotify.com/playlist/14yWaRi9Tymm2Qsw5VWToA?si=2d6476351cb848b1"
+
 num_searches <- 250
-# user_to_exclude <- "1254892983"  # Blake
-user_to_exclude <- "31wu6iqo64a57ny4ok2c6rnujcoq"  # Kate
-search_results <- create_playlist_searches(playlist_name, playlist_link, num_searches, user_to_exclude = NULL, trawl = FALSE)
+user_to_exclude <- "1254892983"  # Blake
+# user_to_exclude <- "31wu6iqo64a57ny4ok2c6rnujcoq"  # Kate
+# search_results <- create_playlist_searches(playlist_name, playlist_link, num_searches, user_to_exclude = NULL, trawl = FALSE)
 
 
 # Build playlist ----------------------------------------------------------
@@ -66,8 +69,8 @@ popularity_bias <- 50
 model <- new.env()
 sys.source(sprintf("R/models/%s.R", model_name), envir = model)
 
-model$build_playlist(search_results, playlist_name, playlist_link, user_to_exclude, num_output_tracks,
-                     diversity_bias)
+# model$build_playlist(search_results, playlist_name, playlist_link, user_to_exclude, num_output_tracks,
+#                      diversity_bias)
 
 
 

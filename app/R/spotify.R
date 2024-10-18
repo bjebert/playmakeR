@@ -42,7 +42,7 @@ parse_tracks <- function(res) {
 }
 
 
-import_playlist <- function(playlist_link, import_length = 1000, use_cache = TRUE, cache_expiry_days = 90, attempts = 0) {
+import_playlist <- function(playlist_link, import_length = 1000, use_cache = TRUE, cache_expiry_days = 90, attempts = 0, get_metadata = FALSE) {
     access_token <- readLines("tokens/access.token")
     playlist_id <- link2id(playlist_link)
     
@@ -105,6 +105,14 @@ import_playlist <- function(playlist_link, import_length = 1000, use_cache = TRU
     playlist <- list('id' = playlist_id,
                      'tracks' = tracks)
     
+    if(get_metadata) {
+        res_details <- GET(sprintf("https://api.spotify.com/v1/playlists/%s/", playlist_id), 
+                           add_headers('Authorization' = sprintf('Bearer %s', access_token)))
+        
+        playlist[["name"]] <- content(res_details)[["name"]]
+        playlist[["icon"]] <- content(res_details)[["images"]][[1]][["url"]]
+    }
+    
     saveRDS(playlist, file_loc)
     
     return(playlist)
@@ -129,10 +137,12 @@ export_playlist <- function(playlist_name, track_ids) {
     }
     
     playlist_id <- content(res)[["id"]]
+    track_ids <- unlist(track_ids)
     
     # Add items to playlist ---------------------------------------------------
     
     for(i in seq(1, length(track_ids), 100)) {
+        print(i)
         uris <- sprintf('spotify:track:%s', track_ids[i:min(i + 99, length(track_ids))])
         
         post_data <- list('position' = i - 1,
@@ -234,6 +244,10 @@ track2id <- function(track_name) {
     
     res <- GET(sprintf("https://api.spotify.com/v1/search?q=%s&type=track", gsub(" ", "+", track_name)), 
                add_headers('Authorization' = sprintf('Bearer %s', access_token)))
+    
+    if(length(content(res)) == 0) {
+        return(NULL)
+    }
     
     return(content(res)[["tracks"]][["items"]][[1]][["id"]])
 }
