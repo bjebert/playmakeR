@@ -61,7 +61,7 @@ import_playlist <- function(playlist_link, import_length = 1000, use_cache = TRU
             cache_age_days <- as.numeric(difftime(Sys.time(), file.info(file_loc)[["mtime"]], units = "days"))
             
             if(cache_age_days < cache_expiry_days) {
-                return(readRDS(file_loc))
+                return(c(list("result" = "success"), readRDS(file_loc)))
             }
         }
     }
@@ -73,10 +73,8 @@ import_playlist <- function(playlist_link, import_length = 1000, use_cache = TRU
     
     if(status_code(res) != 200) {
         print(sprintf("Error importing playlist id %s: %s", playlist_id, content(res)))
-        
         if(attempts == 0) {
-            print("Could not import playlist; out of attempts")
-            return(NULL)
+            return(list("result" = sprintf("Could not import playlist. %d: %s", content(res)[["error"]][["status"]], content(res)[["error"]][["message"]])))
         }
         
         print("Obtaining new access token...")
@@ -115,7 +113,7 @@ import_playlist <- function(playlist_link, import_length = 1000, use_cache = TRU
     
     saveRDS(playlist, file_loc)
     
-    return(playlist)
+    return(c(list("result" = "success"), playlist))
 }
 
 

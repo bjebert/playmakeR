@@ -2,7 +2,7 @@
 
 
 get_followers <- function(user_id) {
-    access_token <- "Bearer [REDACTED]"
+    access_token <- readLines("tokens/access.token")
     
     res <- GET(sprintf("https://spclient.wg.spotify.com/user-profile-view/v3/profile/%s/followers", user_id),
                add_headers('Authorization' = access_token))
@@ -21,7 +21,7 @@ get_followers <- function(user_id) {
 }
 
 
-trawl_friends <- function() {
+trawl_friends <- function(user_id = "1254892983") {
     
     # Get fresh access token --------------------------------------------------
     
@@ -30,7 +30,7 @@ trawl_friends <- function() {
 
     # Begin trawl -------------------------------------------------------------
 
-    followers_dt <- get_followers(user_id = "1254892983")
+    followers_dt <- get_followers(user_id)
     followers <- followers_dt[["id"]]
     
     while(length(followers) > 0) {

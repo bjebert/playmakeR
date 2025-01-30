@@ -1,3 +1,5 @@
+library(httr)
+
 
 create_playlist_searches <- function(playlist_name, playlist_link, num_searches, user_to_exclude, trawl = FALSE) {
     
@@ -12,11 +14,11 @@ create_playlist_searches <- function(playlist_name, playlist_link, num_searches,
     
     # Create search cache -----------------------------------------------------
     
-    cache_dt <- create_cache(user_to_exclude, playlist_link)
+    song_db <- create_cache(user_to_exclude, playlist_link)
     
     # Make Google searches ----------------------------------------------------
     
-    search_results <- make_google_searches(playlist_name, source_playlist, num_searches, cache_dt, trawl)
+    search_results <- make_google_searches(playlist_name, source_playlist, num_searches, song_db, trawl)
 }
 
 
@@ -77,17 +79,19 @@ search_cache <- function(cache_dt, search_tracks, is_track_search) {
 }
 
 
-make_google_searches <- function(playlist_name, source_playlist, num_searches, cache_dt, trawl = FALSE) {
+make_google_searches <- function(playlist_name, source_playlist, num_searches, save_results = TRUE, song_db = NULL, trawl = FALSE,
+                                 track_vs_artist_ratio = 0.6, search_specificity = 2) {
     
     # Support for caching of search results
+    cf <- sprintf("R/search/results/%s.rds", source_playlist[["id"]])
     
-    cf <- sprintf("cache/search/%s.rds", playlist_name)
+    search_results <- list()
     
-    if(file.exists(cf)) {
+    if(save_results && file.exists(cf)) {
         cache <- readRDS(cf)
         search_results <- cache[["search_results"]]
         history <- cache[["history"]]
-        print(sprintf("Note: %d cached search results already exist for this playlist", length(search_results)))
+        # print(sprintf("Note: %d cached search results exist for this playlist", length(search_results)))
     } else {
         search_results <- list()
         history <- c()  
@@ -96,37 +100,20 @@ make_google_searches <- function(playlist_name, source_playlist, num_searches, c
     successful_searches <- 0
     
     while(successful_searches < num_searches) {
-        
-        r <- runif(1)
-        
-        # 50%: search for tracks
-        # 50%: search for artists
-        is_track_search <- r <= 0.5
+        is_track_search <- runif(1) <= track_vs_artist_ratio
         
         if(is_track_search) {
-            r <- runif(1)
+            distr <- c(ppois(0:3, lambda = search_specificity * 0.5), 1)
+            n_tracks <- min(which(runif(1) < distr))
             
-            # 20%: 1 song
-            # 60%: 2 songs
-            # 15%: 3 songs
-            # 5%: 4 songs
-            
-            if(r <= 0.2) {
-                n <- 1
-            } else if(r <= 0.8) {
-                n <- 2
-            } else if(r <= 0.95) {
-                n <- 3
-            } else {
-                n <- 4
-            }
-            
-            search_tracks <- sample(source_playlist[["tracks"]], n)
-            search_titles <- sapply(search_tracks, function(track) sprintf("%s - %s", track[["name"]], paste(track[["artists"]], collapse = ", ")))
+            search_tracks <- sample(source_playlist[["tracks"]], n_tracks)
+            search_titles <- sapply(search_tracks, function(track) sprintf("%s * %s", track[["name"]], paste(track[["artists"]], collapse = ", ")))
             
         } else {
-            n <- sample(2:4, 1)
-            search_tracks <- sample(source_playlist[["tracks"]], n)
+            distr <- c(ppois(0:3, lambda = search_specificity), 1)
+            n_artists <- min(which(runif(1) < distr))
+            
+            search_tracks <- sample(source_playlist[["tracks"]], n_artists)
             search_titles <- unique(sort(sapply(search_tracks, function(x) x[["artists"]][1])))
         }
         
@@ -137,40 +124,62 @@ make_google_searches <- function(playlist_name, source_playlist, num_searches, c
         }
         
         search_result <- search_valueserp(search_tracks, search_titles)
-        cache_result <- search_cache(cache_dt, search_tracks, is_track_search)
-        
+        search_result[["is_track_search"]] <- is_track_search
+                
         if(length(search_result[["search_links"]]) > 0) {
             search_result[["search_playlists"]] <- lapply(search_result[["search_links"]], function(link) playlist2dt(import_playlist(link)))
+            search_result[["search_playlists"]] <- search_result[["search_playlists"]][!sapply(search_result[["search_playlists"]], is.null)]
         } else {
             search_result[["search_playlists"]] <- NULL
         }
         
-        if(length(cache_result[["search_links"]]) > 0) {
-            cache_result[["search_playlists"]] <- lapply(cache_result[["search_links"]], function(link) playlist2dt(import_playlist(link)))
-        } else {
-            cache_result[["search_playlists"]] <- NULL
-        }
-        
         search_results[[length(search_results) + 1]] <- search_result
-        search_results[[length(search_results) + 1]] <- cache_result
+        
+        if(!is.null(song_db)) {
+            cache_result <- search_cache(song_db, search_tracks, is_track_search)
+            cache_result[["is_track_search"]] <- is_track_search
+            
+            if(length(cache_result[["search_links"]]) > 0) {
+                cache_result[["search_playlists"]] <- lapply(cache_result[["search_links"]], function(link) playlist2dt(import_playlist(link)))
+            } else {
+                cache_result[["search_playlists"]] <- NULL
+            }
+            
+            search_results[[length(search_results) + 1]] <- cache_result
+        }
         
         successful_searches <- successful_searches + 1
         
-        print(sprintf("Search %d/%d | Num Results: %d | Num Results (cache): %d | Search: %s", 
-                      successful_searches, num_searches, search_result[["total_results"]], cache_result[["total_results"]], history_string))
+        if(is.null(song_db)) {
+            print(sprintf("Search %d/%d | Num Results: %d | Search: %s", 
+                          successful_searches, num_searches, search_result[["total_results"]], history_string))
+        } else {
+            print(sprintf("Search %d/%d | Num Results: %d | Num Results (cache): %d | Search: %s", 
+                          successful_searches, num_searches, search_result[["total_results"]], cache_result[["total_results"]], history_string))
+        }
+        
+        search_links <- search_result[["search_links"]]
+        
+        if(!is.null(song_db)) {
+            search_links <- c(search_links, cache_result[["search_links"]])
+        }
         
         if(trawl) {  # For top 10 results, import other playlists from users that created them
-            sapply(head(unname(sapply(c(search_result[["search_links"]], cache_result[["search_links"]]), link2id)), 10), function(playlist_id) {
+            sapply(head(unname(sapply(search_links, link2id)), 10), function(playlist_id) {
                 import_other_playlists_from_creator(playlist_id, verbose = TRUE)    
             })
         }
         
         history <- c(history, history_string)
         
-        cache <- list(search_results = search_results,
-                      history = history)
+        if(save_results) {
+            cache <- list(search_results = search_results,
+                          history = history)
+            
+            saveRDS(cache, cf)
+        }
         
-        saveRDS(cache, cf)
+        return(search_results)
     }
 }
 
@@ -185,16 +194,22 @@ search_valueserp <- function(search_tracks, search_titles) {
     query <- gsub("'", "%27", query)
     
     address <- sprintf("https://api.valueserp.com/search?api_key=%s&max_page=3&q=%s&filter=0", api_key, query)
-    res <- content(httr::GET(address))
+    
+    res <- httr::content(httr::GET(address))
     
     if(!("organic_results" %in% names(res))) {
-        return(list(search_links = NULL,
-                    total_results = 0))
+        return(list(search_tracks = search_tracks,
+                    search_titles = search_titles,
+                    search_links = NULL,
+                    total_results = 0,
+                    credits_remaining = res[["request_info"]][["topup_credits_remaining"]]))
     } 
     
     return(list(search_tracks = search_tracks,
+                search_titles = search_titles,
                 search_links = sapply(res[["organic_results"]], function(x) x[["link"]]),
-                total_results = res[["search_information"]][["total_results"]]))
+                total_results = res[["search_information"]][["total_results"]],
+                credits_remaining = res[["request_info"]][["topup_credits_remaining"]]))
 }
 
 
